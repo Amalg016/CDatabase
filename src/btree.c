@@ -1,5 +1,5 @@
-#include "btree.h"
-#include "pager.h"
+#include "../include/btree.h"
+#include "../include/pager.h"
 #include <string.h>
 #include <stdio.h>
 

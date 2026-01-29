@@ -1,4 +1,4 @@
-#include "pager.h"
+#include "../include/pager.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
