@@ -1,10 +1,29 @@
+#include "btree/btree.h"
+#include "btree/pager.h"
 #include "db.h"
 #include <stdio.h>
 #include <string.h>
 
-int main() {
-    db_open("mydb.data");
+void stress_testing() {
+    pager_open("btree.db");
+    btree_init();
 
+    for (int i = 1; i <= 100000; i++) {
+        btree_insert(i, i * 10);
+    }
+
+    uint32_t value;
+    for (int i = 1; i <= 100000; i++) {
+        if (!btree_search(i, &value))
+            printf("Missing %d\n", i);
+    }
+
+    pager_close();
+}
+
+int main() {
+
+    db_open("mydb.data");
     char cmd[256], key[64], val[128];
 
     while (1) {
@@ -27,7 +46,6 @@ int main() {
             break;
         }
     }
-
     db_close();
     return 0;
 }
