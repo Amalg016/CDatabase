@@ -1,20 +1,26 @@
 #ifndef CURSOR_H
 #define CURSOR_H
 
+#include "db.h"
 #include "table.h"
+#include "btree.h"
+#include <stdlib.h>
 
-// Range cursor for optimized range scans
-typedef struct {
-    Cursor* start_cursor;
-    Cursor* end_cursor;
-    bool has_range;
-} RangeCursor;
+struct Cursor {
+    Table* table;
+    uint32_t page_num;
+    uint32_t cell_num;
+    bool end_of_table;
+};
+Cursor* table_start(Table* table);
+Cursor* table_find(Table* table, uint32_t key);
+void* cursor_value(Cursor* cursor);
+uint32_t cursor_key(Cursor* cursor);
+void cursor_advance(Cursor* cursor);
+void leaf_node_insert(Cursor* cursor, uint32_t key, void* value);
+void create_new_root(Table* table, uint32_t right_child_page_num);
+void cursor_free(Cursor* cursor);
 
 Cursor* create_cursor(Table* table, uint32_t page_num, uint32_t cell_num);
-RangeCursor* create_range_cursor(Table* table, uint32_t start_key, uint32_t end_key);
-void free_cursor(Cursor* cursor);
-void free_range_cursor(RangeCursor* range_cursor);
-bool range_cursor_has_next(RangeCursor* rcursor);
-Row* range_cursor_next(RangeCursor* rcursor);
 
 #endif
