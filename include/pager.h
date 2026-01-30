@@ -1,12 +1,19 @@
 #ifndef PAGER_H
 #define PAGER_H
 
-#include <stdint.h>
+#include "common.h"
 
-int pager_open(const char *filename);
-void pager_close();
+typedef struct {
+    int file_descriptor;
+    uint32_t file_length;
+    uint32_t num_pages;
+    void* pages[TABLE_MAX_PAGES];
+} Pager;
 
-void *pager_get_page(uint32_t page_num);
-uint32_t pager_new_page();
+Pager* pager_open(const char* filename);
+void* get_page(Pager* pager, uint32_t page_num);
+void pager_flush(Pager* pager, uint32_t page_num);
+void pager_close(Pager* pager);
+uint32_t get_unused_page_num(Pager* pager);
 
 #endif
