@@ -14,7 +14,7 @@ Pager* pager_open(const char* filename) {
 
     off_t file_length = lseek(fd, 0, SEEK_END);
 
-    Pager* pager = malloc(sizeof(Pager));
+    Pager* pager = (Pager*)malloc(sizeof(Pager));
     pager->file_descriptor = fd;
     pager->file_length = file_length;
     pager->num_pages = (file_length / PAGE_SIZE);
@@ -31,9 +31,10 @@ Pager* pager_open(const char* filename) {
     return pager;
 }
 
-void* get_page(Pager* pager, uint32_t page_num) {
-    if (page_num >= TABLE_MAX_PAGES) {
-        printf("Tried to fetch page number out of bounds. %d > %d\n",
+// Get a page from cache or disk
+void* pager_get_page(Pager* pager, uint32_t page_num) {
+    if (page_num > TABLE_MAX_PAGES) {
+        printf("Tried to fetch page number out of bounds. %d > %d\n", 
                page_num, TABLE_MAX_PAGES);
         exit(EXIT_FAILURE);
     }
@@ -67,6 +68,7 @@ void* get_page(Pager* pager, uint32_t page_num) {
     return pager->pages[page_num];
 }
 
+// Flush a page to disk
 void pager_flush(Pager* pager, uint32_t page_num) {
     if (pager->pages[page_num] == NULL) {
         printf("Tried to flush null page\n");
@@ -74,31 +76,50 @@ void pager_flush(Pager* pager, uint32_t page_num) {
     }
 
     off_t offset = lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
+
     if (offset == -1) {
         printf("Error seeking: %d\n", errno);
         exit(EXIT_FAILURE);
     }
 
-    ssize_t bytes_written = write(pager->file_descriptor, pager->pages[page_num], PAGE_SIZE);
+    ssize_t bytes_written = 
+        write(pager->file_descriptor, pager->pages[page_num], PAGE_SIZE);
+
     if (bytes_written == -1) {
         printf("Error writing: %d\n", errno);
         exit(EXIT_FAILURE);
     }
 }
 
+// Close the pager and flush all pages
 void pager_close(Pager* pager) {
     for (uint32_t i = 0; i < pager->num_pages; i++) {
-        if (pager->pages[i] != NULL) {
-            pager_flush(pager, i);
-            free(pager->pages[i]);
+        if (pager->pages[i] == NULL) {
+            continue;
+        }
+        pager_flush(pager, i);
+        free(pager->pages[i]);
+        pager->pages[i] = NULL;
+    }
+
+    int result = close(pager->file_descriptor);
+    if (result == -1) {
+        printf("Error closing db file.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
+        void* page = pager->pages[i];
+        if (page) {
+            free(page);
             pager->pages[i] = NULL;
         }
     }
 
-    close(pager->file_descriptor);
     free(pager);
 }
 
-uint32_t get_unused_page_num(Pager* pager) {
+// Allocate a new page
+uint32_t pager_allocate_page(Pager* pager) {
     return pager->num_pages;
 }
