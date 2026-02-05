@@ -1,15 +1,16 @@
-#ifndef DB_H
-#define DB_H
+#ifndef DB_MULTI_H
+#define DB_MULTI_H
 
 #include <stdint.h>
 #include <stdbool.h>
 
 // Page size (4KB)
 #define PAGE_SIZE 4096
-#define TABLE_MAX_PAGES 100
+#define TABLE_MAX_PAGES 400
+#define MAX_TABLES 10
 
 // B+tree node configuration
-#define ORDER 4  // Order of B+tree (max children per node)
+#define ORDER 4
 #define MAX_KEYS (ORDER - 1)
 #define MIN_KEYS ((ORDER + 1) / 2 - 1)
 
@@ -23,16 +24,30 @@ typedef enum {
 typedef struct {
     char name[32];
     ColumnType type;
-    uint32_t size;  // For TEXT type
+    uint32_t size;
+    bool is_pk;  // Is this column the primary key?
 } Column;
+
+#define MAX_COLUMNS_PER_TABLE 10
 
 // Table schema
 typedef struct {
     char name[32];
     uint32_t num_columns;
-    Column* columns;
+    Column columns[MAX_COLUMNS_PER_TABLE];  // Inline storage instead of pointer
     uint32_t row_size;
+    uint32_t root_page_num;  // Root page for this table's B+tree
+    bool in_use;
+    int32_t pk_column;  // Index of PRIMARY KEY column (-1 if none)
+    uint32_t next_rowid;  // Auto-increment if no PK
 } Schema;
+
+// Database catalog (stored in page 0)
+typedef struct {
+    uint32_t num_tables;
+    uint32_t next_free_page;
+    Schema tables[MAX_TABLES];
+} Catalog;
 
 // Node types
 typedef enum {
@@ -40,17 +55,9 @@ typedef enum {
     NODE_LEAF
 } NodeType;
 
-// B+tree node header
-typedef struct {
-    NodeType type;
-    bool is_root;
-    uint32_t parent;
-    uint32_t num_keys;
-} NodeHeader;
-
 // Forward declarations
 typedef struct Table Table;
 typedef struct Pager Pager;
 typedef struct Cursor Cursor;
-
-#endif // DB_H
+typedef struct Database Database;
+#endif // DB_MULTI_H

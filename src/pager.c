@@ -14,7 +14,7 @@ Pager *pager_open(const char *filename) {
 
   off_t file_length = lseek(fd, 0, SEEK_END);
 
-  Pager *pager = (Pager *)malloc(sizeof(Pager));
+  Pager *pager = malloc(sizeof(Pager));
   pager->file_descriptor = fd;
   pager->file_length = file_length;
   pager->num_pages = (file_length / PAGE_SIZE);
@@ -31,7 +31,6 @@ Pager *pager_open(const char *filename) {
   return pager;
 }
 
-// Get a page from cache or disk
 void *pager_get_page(Pager *pager, uint32_t page_num) {
   if (page_num > TABLE_MAX_PAGES) {
     printf("Tried to fetch page number out of bounds. %d > %d\n", page_num,
@@ -40,11 +39,9 @@ void *pager_get_page(Pager *pager, uint32_t page_num) {
   }
 
   if (pager->pages[page_num] == NULL) {
-    // Cache miss. Allocate memory and load from file.
     void *page = malloc(PAGE_SIZE);
     uint32_t num_pages = pager->file_length / PAGE_SIZE;
 
-    // We might save a partial page at the end of the file
     if (pager->file_length % PAGE_SIZE) {
       num_pages += 1;
     }
@@ -68,7 +65,6 @@ void *pager_get_page(Pager *pager, uint32_t page_num) {
   return pager->pages[page_num];
 }
 
-// Flush a page to disk
 void pager_flush(Pager *pager, uint32_t page_num) {
   if (pager->pages[page_num] == NULL) {
     printf("Tried to flush null page\n");
@@ -91,7 +87,6 @@ void pager_flush(Pager *pager, uint32_t page_num) {
   }
 }
 
-// Close the pager and flush all pages
 void pager_close(Pager *pager) {
   for (uint32_t i = 0; i < pager->num_pages; i++) {
     if (pager->pages[i] == NULL) {
@@ -119,5 +114,4 @@ void pager_close(Pager *pager) {
   free(pager);
 }
 
-// Allocate a new page
 uint32_t pager_allocate_page(Pager *pager) { return pager->num_pages; }
