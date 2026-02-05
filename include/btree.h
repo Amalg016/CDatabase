@@ -70,10 +70,8 @@ void initialize_internal_node(void* node);
 uint32_t leaf_node_find(void* node, uint32_t key); 
 Cursor* internal_node_find(Table* table, uint32_t page_num, uint32_t key);
 uint32_t internal_node_find_child(void* node, uint32_t key);
-void internal_node_insert(Table* table, uint32_t parent_page_num, uint32_t child_page_num);
 void update_internal_node_key(void* node, uint32_t old_key, uint32_t new_key);
 void print_tree(Pager* pager, uint32_t page_num, uint32_t indentation_level);
-void create_new_root(Table* table, uint32_t right_child_page_num);
 uint32_t get_node_max_key(Pager* pager, void* node);
 
 #endif

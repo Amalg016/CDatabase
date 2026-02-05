@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -g -O2 -Isrc
 TARGET = bplus_db
-SOURCES = src/main.c src/pager.c src/btree.c src/table.c src/cursor.c 
+SOURCES = src/main.c src/pager.c src/btree.c src/table.c src/cursor.c src/database.c
 OBJECTS = $(SOURCES:.c=.o)
 
 all: $(TARGET)

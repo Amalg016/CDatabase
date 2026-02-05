@@ -1,7 +1,20 @@
-insert 1 alice alice@example.com 25
-insert 3 bob bob@example.com 30
-insert 5 charlie charlie@example.com 35
+create table users 3
+id int PRIMARY KEY
+name text 32
+age int
+insert 100 Alice 25
+insert 101 Bob 30
+insert 102 Charlie 35
 select
 .btree
-.schema
+create table logs 2
+message text 50
+timestamp int
+insert SystemStart 1000
+insert UserLogin 1001
+insert DataSaved 1002
+select
+use users
+select
+.tables
 .exit
