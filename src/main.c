@@ -157,16 +157,20 @@ PrepareResult prepare_select(InputBuffer *input_buffer, Statement *statement) {
   statement->select_columns = NULL;
   statement->num_select_columns = 0;
 
-  // Parse: SELECT * FROM table_name
-  // or: SELECT col1, col2 FROM table_name
-  // or: SELECT * table_name (simplified)
+  // Make a copy of the buffer since strtok modifies it
+  char buffer_copy[1024];
+  strncpy(buffer_copy, input_buffer->buffer, 1023);
+  buffer_copy[1023] = '\0';
 
-  char *token = strtok(input_buffer->buffer, " "); // "select"
-  token = strtok(NULL, " ");                       // "*" or column name
+  // Parse: SELECT * FROM table_name
+  // or: SELECT col1 col2 col3 FROM table_name
+
+  char *token = strtok(buffer_copy, " "); // "select"
+  token = strtok(NULL, " ");              // "*" or first column name
 
   if (!token) {
     printf("Syntax: SELECT * FROM <table>\n");
-    printf("    or: SELECT <col1> <col2> FROM <table>\n");
+    printf("    or: SELECT <col1> <col2> ... FROM <table>\n");
     return PREPARE_SYNTAX_ERROR;
   }
 
@@ -175,10 +179,38 @@ PrepareResult prepare_select(InputBuffer *input_buffer, Statement *statement) {
     statement->select_columns = NULL; // NULL means all columns
     token = strtok(NULL, " ");        // Should be "from" or table name
   } else {
-    // For now, treat non-* as SELECT * (can enhance later)
-    statement->select_columns = NULL;
+    // Parse column list - count how many columns before "from"
+    uint32_t col_count = 0;
+    char *count_token = token;
+    while (count_token && strcasecmp(count_token, "from") != 0) {
+      col_count++;
+      count_token = strtok(NULL, " ");
+    }
+
+    if (col_count == 0) {
+      printf("Error: No columns specified\n");
+      return PREPARE_SYNTAX_ERROR;
+    }
+
+    // Allocate space for column names
+    statement->select_columns = malloc(sizeof(char *) * col_count);
+    statement->num_select_columns = col_count;
+
+    // Parse again to get the columns
+    strncpy(buffer_copy, input_buffer->buffer, 1023);
+    buffer_copy[1023] = '\0';
+    token = strtok(buffer_copy, " "); // "select"
+    token = strtok(NULL, " ");        // first column
+
+    for (uint32_t i = 0; i < col_count; i++) {
+      statement->select_columns[i] = malloc(32);
+      strncpy(statement->select_columns[i], token, 31);
+      statement->select_columns[i][31] = '\0';
+      token = strtok(NULL, " ");
+    }
   }
 
+  // token should now be "from" or table name
   // Skip "from" keyword if present
   if (token && strcasecmp(token, "from") == 0) {
     token = strtok(NULL, " ");
@@ -186,6 +218,12 @@ PrepareResult prepare_select(InputBuffer *input_buffer, Statement *statement) {
 
   if (!token) {
     printf("Error: Table name required\n");
+    if (statement->select_columns) {
+      for (uint32_t i = 0; i < statement->num_select_columns; i++) {
+        free(statement->select_columns[i]);
+      }
+      free(statement->select_columns);
+    }
     return PREPARE_SYNTAX_ERROR;
   }
 
@@ -197,7 +235,36 @@ PrepareResult prepare_select(InputBuffer *input_buffer, Statement *statement) {
   Schema *schema = db_get_table(current_db, statement->table_name);
   if (!schema) {
     printf("Table '%s' not found\n", statement->table_name);
+    if (statement->select_columns) {
+      for (uint32_t i = 0; i < statement->num_select_columns; i++) {
+        free(statement->select_columns[i]);
+      }
+      free(statement->select_columns);
+    }
     return PREPARE_TABLE_NOT_FOUND;
+  }
+
+  // Verify all column names exist in schema
+  if (statement->select_columns) {
+    for (uint32_t i = 0; i < statement->num_select_columns; i++) {
+      bool found = false;
+      for (uint32_t j = 0; j < schema->num_columns; j++) {
+        if (strcasecmp(statement->select_columns[i], schema->columns[j].name) ==
+            0) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        printf("Error: Column '%s' not found in table '%s'\n",
+               statement->select_columns[i], statement->table_name);
+        for (uint32_t k = 0; k < statement->num_select_columns; k++) {
+          free(statement->select_columns[k]);
+        }
+        free(statement->select_columns);
+        return PREPARE_SYNTAX_ERROR;
+      }
+    }
   }
 
   return PREPARE_SUCCESS;
@@ -444,7 +511,33 @@ ExecuteResult execute_select(Statement *statement) {
     void **values = deserialize_row(table->schema, row_data);
 
     printf("Key: %d | ", cursor_key(cursor));
-    print_row(table->schema, values);
+
+    if (statement->select_columns == NULL) {
+      // SELECT * - print all columns
+      print_row(table->schema, values);
+    } else {
+      // SELECT specific columns
+      for (uint32_t i = 0; i < statement->num_select_columns; i++) {
+        // Find the column in schema
+        for (uint32_t j = 0; j < table->schema->num_columns; j++) {
+          Column *col = &table->schema->columns[j];
+          if (strcasecmp(statement->select_columns[i], col->name) == 0) {
+            // Print this column
+            printf("%s: ", col->name);
+            if (col->type == COL_TYPE_INT) {
+              printf("%d", *(int32_t *)values[j]);
+            } else if (col->type == COL_TYPE_TEXT) {
+              printf("%s", (char *)values[j]);
+            }
+            if (i < statement->num_select_columns - 1) {
+              printf(", ");
+            }
+            break;
+          }
+        }
+      }
+      printf("\n");
+    }
 
     for (uint32_t i = 0; i < table->schema->num_columns; i++) {
       free(values[i]);
@@ -545,6 +638,13 @@ int main(int argc, char *argv[]) {
         }
       }
       free(statement.values);
+    }
+
+    if (statement.type == STATEMENT_SELECT && statement.select_columns) {
+      for (uint32_t i = 0; i < statement.num_select_columns; i++) {
+        free(statement.select_columns[i]);
+      }
+      free(statement.select_columns);
     }
   }
 }
