@@ -2,19 +2,18 @@ create table users 3
 id int PRIMARY KEY
 name text 32
 age int
-insert 100 Alice 25
-insert 101 Bob 30
-insert 102 Charlie 35
-select
-.btree
-create table logs 2
-message text 50
-timestamp int
-insert SystemStart 1000
-insert UserLogin 1001
-insert DataSaved 1002
-select
-use users
-select
+insert into users values 100 Alice 25
+insert into users values 101 Bob 30
+insert users 102 Charlie 35
+select * from users
+create table products 2
+pid int PRIMARY KEY
+pname text 40
+insert into products values 1 Laptop
+insert products 2 Mouse
+select * from products
+select * from users
+.btree users
+.btree products
 .tables
 .exit
