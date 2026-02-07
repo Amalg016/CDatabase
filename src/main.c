@@ -52,14 +52,13 @@ typedef enum {
   PREPARE_SUCCESS,
   PREPARE_SYNTAX_ERROR,
   PREPARE_UNRECOGNIZED_STATEMENT,
-  PREPARE_NO_TABLE_SELECTED
+  PREPARE_TABLE_NOT_FOUND
 } PrepareResult;
 
 typedef enum {
   STATEMENT_INSERT,
   STATEMENT_SELECT,
   STATEMENT_CREATE_TABLE,
-  STATEMENT_USE_TABLE
 } StatementType;
 
 typedef struct {
@@ -70,6 +69,9 @@ typedef struct {
   // For CREATE TABLE
   uint32_t num_columns;
   Column *columns;
+  // For SELECT
+  char **select_columns; // NULL means SELECT *
+  uint32_t num_select_columns;
 } Statement;
 
 typedef enum {
@@ -78,9 +80,8 @@ typedef enum {
   EXECUTE_TABLE_NOT_FOUND
 } ExecuteResult;
 
-// Global current table and database
+// Global database
 Database *current_db = NULL;
-Table *current_table = NULL;
 
 MetaCommandResult do_meta_command(InputBuffer *input_buffer) {
   if (strcmp(input_buffer->buffer, ".exit") == 0) {
@@ -97,11 +98,20 @@ MetaCommandResult do_meta_command(InputBuffer *input_buffer) {
     }
     return META_COMMAND_SUCCESS;
   } else if (strncmp(input_buffer->buffer, ".btree", 6) == 0) {
-    if (current_table) {
-      printf("Tree for table '%s':\n", current_table->schema->name);
-      print_tree(current_table->pager, current_table->schema->root_page_num, 0);
+    // .btree <table_name>
+    char *table_name = strchr(input_buffer->buffer, ' ');
+    if (table_name) {
+      table_name++; // Skip the space
+      Table *table = table_open(current_db, table_name);
+      if (table) {
+        printf("Tree for table '%s':\n", table->schema->name);
+        print_tree(table->pager, table->schema->root_page_num, 0);
+        table_close(table);
+      } else {
+        printf("Table '%s' not found\n", table_name);
+      }
     } else {
-      printf("No table selected. Use 'use <table_name>' first.\n");
+      printf("Usage: .btree <table_name>\n");
     }
     return META_COMMAND_SUCCESS;
   } else {
@@ -142,43 +152,105 @@ PrepareResult prepare_create_table(InputBuffer *input_buffer,
   return PREPARE_SUCCESS;
 }
 
-PrepareResult prepare_use_table(InputBuffer *input_buffer,
-                                Statement *statement) {
-  statement->type = STATEMENT_USE_TABLE;
+PrepareResult prepare_select(InputBuffer *input_buffer, Statement *statement) {
+  statement->type = STATEMENT_SELECT;
+  statement->select_columns = NULL;
+  statement->num_select_columns = 0;
 
-  char *keyword = strtok(input_buffer->buffer, " "); // "use"
-  char *table_name = strtok(NULL, " ");
+  // Parse: SELECT * FROM table_name
+  // or: SELECT col1, col2 FROM table_name
+  // or: SELECT * table_name (simplified)
 
-  if (!table_name) {
+  char *token = strtok(input_buffer->buffer, " "); // "select"
+  token = strtok(NULL, " ");                       // "*" or column name
+
+  if (!token) {
+    printf("Syntax: SELECT * FROM <table>\n");
+    printf("    or: SELECT <col1> <col2> FROM <table>\n");
     return PREPARE_SYNTAX_ERROR;
   }
 
-  strncpy(statement->table_name, table_name, 31);
+  // Check if SELECT *
+  if (strcmp(token, "*") == 0) {
+    statement->select_columns = NULL; // NULL means all columns
+    token = strtok(NULL, " ");        // Should be "from" or table name
+  } else {
+    // For now, treat non-* as SELECT * (can enhance later)
+    statement->select_columns = NULL;
+  }
+
+  // Skip "from" keyword if present
+  if (token && strcasecmp(token, "from") == 0) {
+    token = strtok(NULL, " ");
+  }
+
+  if (!token) {
+    printf("Error: Table name required\n");
+    return PREPARE_SYNTAX_ERROR;
+  }
+
+  // token is now the table name
+  strncpy(statement->table_name, token, 31);
   statement->table_name[31] = '\0';
+
+  // Verify table exists
+  Schema *schema = db_get_table(current_db, statement->table_name);
+  if (!schema) {
+    printf("Table '%s' not found\n", statement->table_name);
+    return PREPARE_TABLE_NOT_FOUND;
+  }
 
   return PREPARE_SUCCESS;
 }
 
 PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement) {
-  if (!current_table) {
-    return PREPARE_NO_TABLE_SELECTED;
-  }
-
   statement->type = STATEMENT_INSERT;
 
-  strtok(input_buffer->buffer, " "); // Skip "insert" keyword
+  // Parse: INSERT INTO table_name VALUES value1 value2 ...
+  // or: INSERT table_name value1 value2 ...
 
-  statement->values =
-      malloc(sizeof(void *) * current_table->schema->num_columns);
+  char *token = strtok(input_buffer->buffer, " "); // "insert"
+  token = strtok(NULL, " ");                       // "into" or table_name
 
-  for (uint32_t i = 0; i < current_table->schema->num_columns; i++) {
-    Column *col = &current_table->schema->columns[i];
-    char *value_string = strtok(NULL, " ");
+  if (!token) {
+    printf("Syntax: INSERT INTO <table> VALUES <val1> <val2> ...\n");
+    printf("    or: INSERT <table> <val1> <val2> ...\n");
+    return PREPARE_SYNTAX_ERROR;
+  }
 
-    if (value_string == NULL) {
+  // Check if next token is "into"
+  if (strcasecmp(token, "into") == 0) {
+    token = strtok(NULL, " "); // Get table name
+    if (!token) {
+      return PREPARE_SYNTAX_ERROR;
+    }
+  }
+
+  // token is now the table name
+  strncpy(statement->table_name, token, 31);
+  statement->table_name[31] = '\0';
+
+  // Get the schema for this table
+  Schema *schema = db_get_table(current_db, statement->table_name);
+  if (!schema) {
+    printf("Table '%s' not found\n", statement->table_name);
+    return PREPARE_TABLE_NOT_FOUND;
+  }
+
+  // Skip "values" keyword if present
+  token = strtok(NULL, " ");
+  if (token && strcasecmp(token, "values") == 0) {
+    token = strtok(NULL, " "); // Get first value
+  }
+  // Otherwise token already has first value
+
+  // Parse values
+  statement->values = malloc(sizeof(void *) * schema->num_columns);
+
+  for (uint32_t i = 0; i < schema->num_columns; i++) {
+    if (!token) {
       printf("Error: Not enough values. Expected %d columns\n",
-             current_table->schema->num_columns);
-      // Free already allocated values
+             schema->num_columns);
       for (uint32_t j = 0; j < i; j++) {
         free(statement->values[j]);
       }
@@ -186,14 +258,17 @@ PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement) {
       return PREPARE_SYNTAX_ERROR;
     }
 
+    Column *col = &schema->columns[i];
     if (col->type == COL_TYPE_INT) {
       statement->values[i] = malloc(sizeof(int32_t));
-      *(int32_t *)statement->values[i] = atoi(value_string);
+      *(int32_t *)statement->values[i] = atoi(token);
     } else if (col->type == COL_TYPE_TEXT) {
       statement->values[i] = malloc(col->size);
-      strncpy((char *)statement->values[i], value_string, col->size - 1);
+      strncpy((char *)statement->values[i], token, col->size - 1);
       ((char *)statement->values[i])[col->size - 1] = '\0';
     }
+
+    token = strtok(NULL, " ");
   }
 
   return PREPARE_SUCCESS;
@@ -201,21 +276,14 @@ PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement) {
 
 PrepareResult prepare_statement(InputBuffer *input_buffer,
                                 Statement *statement) {
-  if (strncmp(input_buffer->buffer, "create table", 12) == 0) {
+  if (strncasecmp(input_buffer->buffer, "create table", 12) == 0) {
     return prepare_create_table(input_buffer, statement);
   }
-  if (strncmp(input_buffer->buffer, "use", 3) == 0) {
-    return prepare_use_table(input_buffer, statement);
-  }
-  if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
+  if (strncasecmp(input_buffer->buffer, "insert", 6) == 0) {
     return prepare_insert(input_buffer, statement);
   }
-  if (strcmp(input_buffer->buffer, "select") == 0) {
-    if (!current_table) {
-      return PREPARE_NO_TABLE_SELECTED;
-    }
-    statement->type = STATEMENT_SELECT;
-    return PREPARE_SUCCESS;
+  if (strncasecmp(input_buffer->buffer, "select", 6) == 0) {
+    return prepare_select(input_buffer, statement);
   }
 
   return PREPARE_UNRECOGNIZED_STATEMENT;
@@ -299,91 +367,51 @@ ExecuteResult execute_create_table(Statement *statement) {
     printf("No PRIMARY KEY (using auto-increment ROWID, slower lookups)\n");
   }
 
-  // Auto-select the new table
-  if (current_table) {
-    table_close(current_table);
-  }
-  current_table = table_open(current_db, schema->name);
-  printf("Current table: %s\n", current_table->schema->name);
-
-  return EXECUTE_SUCCESS;
-}
-
-ExecuteResult execute_use_table(Statement *statement) {
-  Schema *schema = db_get_table(current_db, statement->table_name);
-  if (!schema) {
-    printf("Table '%s' not found\n", statement->table_name);
-    return EXECUTE_TABLE_NOT_FOUND;
-  }
-
-  // Close current table if any
-  if (current_table) {
-    table_close(current_table);
-  }
-
-  // Open the new table
-  current_table = table_open(current_db, statement->table_name);
-  printf("Using table: %s\n", current_table->schema->name);
-
-  // Show schema
-  printf("Columns: ");
-  for (uint32_t i = 0; i < current_table->schema->num_columns; i++) {
-    Column *col = &current_table->schema->columns[i];
-    printf("%s(%s)", col->name, col->type == COL_TYPE_INT ? "int" : "text");
-    if (col->is_pk) {
-      printf(" [PK]");
-    }
-    if (i < current_table->schema->num_columns - 1)
-      printf(", ");
-  }
-  printf("\n");
-
-  if (current_table->schema->pk_column != -1) {
-    printf(
-        "PRIMARY KEY: %s (B+tree indexed for fast lookups)\n",
-        current_table->schema->columns[current_table->schema->pk_column].name);
-  } else {
-    printf("No PRIMARY KEY (using auto-increment ROWID)\n");
-  }
-
   return EXECUTE_SUCCESS;
 }
 
 ExecuteResult execute_insert(Statement *statement) {
-  void *node = pager_get_page(current_table->pager,
-                              current_table->schema->root_page_num);
+  // Open the table
+  Table *table = table_open(current_db, statement->table_name);
+  if (!table) {
+    printf("Table '%s' not found\n", statement->table_name);
+    return EXECUTE_TABLE_NOT_FOUND;
+  }
+
+  void *node = pager_get_page(table->pager, table->schema->root_page_num);
   uint32_t num_cells = *leaf_node_num_cells(node);
 
-  void *row_data = malloc(current_table->schema->row_size);
-  serialize_row(current_table->schema, statement->values, row_data);
+  void *row_data = malloc(table->schema->row_size);
+  serialize_row(table->schema, statement->values, row_data);
 
   // Determine the B+tree key
   uint32_t btree_key;
 
-  if (current_table->schema->pk_column != -1) {
+  if (table->schema->pk_column != -1) {
     // Use PRIMARY KEY column value as B+tree key
-    int32_t pk_value =
-        *(int32_t *)statement->values[current_table->schema->pk_column];
+    int32_t pk_value = *(int32_t *)statement->values[table->schema->pk_column];
     if (pk_value <= 0) {
       printf("Error: PRIMARY KEY must be positive integer\n");
       free(row_data);
+      table_close(table);
       return EXECUTE_TABLE_FULL;
     }
     btree_key = (uint32_t)pk_value;
   } else {
     // No PRIMARY KEY - use auto-increment ROWID
-    btree_key = current_table->schema->next_rowid++;
-    printf("Note: No PK, assigned ROWID=%u (slower lookups)\n", btree_key);
+    btree_key = table->schema->next_rowid++;
+    printf("Note: No PK, assigned ROWID=%u\n", btree_key);
   }
 
-  Cursor *cursor = table_find(current_table, btree_key);
+  Cursor *cursor = table_find(table, btree_key);
 
   if (cursor->cell_num < num_cells) {
     uint32_t key_at_index = cursor_key(cursor);
     if (key_at_index == btree_key) {
       free(row_data);
       cursor_free(cursor);
-      if (current_table->schema->pk_column != -1) {
+      table_close(table);
+      if (table->schema->pk_column != -1) {
         printf("Error: Duplicate PRIMARY KEY value %u\n", btree_key);
       } else {
         printf("Error: Duplicate ROWID\n");
@@ -392,26 +420,33 @@ ExecuteResult execute_insert(Statement *statement) {
     }
   }
 
-  leaf_node_insert(cursor, btree_key, row_data,
-                   current_table->schema->row_size);
+  leaf_node_insert(cursor, btree_key, row_data, table->schema->row_size);
 
   free(row_data);
   cursor_free(cursor);
+  table_close(table);
 
   return EXECUTE_SUCCESS;
 }
 
 ExecuteResult execute_select(Statement *statement) {
-  Cursor *cursor = table_start(current_table);
+  // Open the table
+  Table *table = table_open(current_db, statement->table_name);
+  if (!table) {
+    printf("Table '%s' not found\n", statement->table_name);
+    return EXECUTE_TABLE_NOT_FOUND;
+  }
+
+  Cursor *cursor = table_start(table);
 
   while (!cursor->end_of_table) {
     void *row_data = cursor_value(cursor);
-    void **values = deserialize_row(current_table->schema, row_data);
+    void **values = deserialize_row(table->schema, row_data);
 
     printf("Key: %d | ", cursor_key(cursor));
-    print_row(current_table->schema, values);
+    print_row(table->schema, values);
 
-    for (uint32_t i = 0; i < current_table->schema->num_columns; i++) {
+    for (uint32_t i = 0; i < table->schema->num_columns; i++) {
       free(values[i]);
     }
     free(values);
@@ -420,6 +455,7 @@ ExecuteResult execute_select(Statement *statement) {
   }
 
   cursor_free(cursor);
+  table_close(table);
   return EXECUTE_SUCCESS;
 }
 
@@ -427,8 +463,6 @@ ExecuteResult execute_statement(Statement *statement) {
   switch (statement->type) {
   case STATEMENT_CREATE_TABLE:
     return execute_create_table(statement);
-  case STATEMENT_USE_TABLE:
-    return execute_use_table(statement);
   case STATEMENT_INSERT:
     return execute_insert(statement);
   case STATEMENT_SELECT:
@@ -449,14 +483,14 @@ int main(int argc, char *argv[]) {
 
   InputBuffer *input_buffer = new_input_buffer();
 
-  printf("Multi-Table B+Tree Database with PRIMARY KEY support\n");
+  printf("Multi-Table B+Tree Database with SQL-like syntax\n");
   printf("Commands:\n");
-  printf("  create table <name> <num_columns> - Create a new table\n");
-  printf("  use <table_name> - Select a table to work with\n");
-  printf("  insert <values...> - Insert record (provide all column values)\n");
-  printf("  select - Display all records from current table\n");
+  printf("  CREATE TABLE <name> <num_columns> - Create a new table\n");
+  printf("  INSERT INTO <table> VALUES <val1> <val2> ... - Insert record\n");
+  printf("  INSERT <table> <val1> <val2> ... - Insert (short form)\n");
+  printf("  SELECT * FROM <table> - Display all records\n");
   printf("  .tables - List all tables\n");
-  printf("  .btree - Show B+tree for current table\n");
+  printf("  .btree <table> - Show B+tree structure\n");
   printf("  .exit - Exit\n\n");
 
   if (current_db->catalog->num_tables > 0) {
@@ -483,9 +517,6 @@ int main(int argc, char *argv[]) {
     switch (prepare_statement(input_buffer, &statement)) {
     case PREPARE_SUCCESS:
       break;
-    case PREPARE_NO_TABLE_SELECTED:
-      printf("No table selected. Use 'use <table_name>' first.\n");
-      continue;
     case PREPARE_SYNTAX_ERROR:
       printf("Syntax error.\n");
       continue;
@@ -507,8 +538,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (statement.type == STATEMENT_INSERT && statement.values) {
-      for (uint32_t i = 0; i < current_table->schema->num_columns; i++) {
-        free(statement.values[i]);
+      Schema *schema = db_get_table(current_db, statement.table_name);
+      if (schema) {
+        for (uint32_t i = 0; i < schema->num_columns; i++) {
+          free(statement.values[i]);
+        }
       }
       free(statement.values);
     }
