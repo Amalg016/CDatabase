@@ -210,10 +210,74 @@ ExecuteResult execute_select(Statement *statement) {
     return EXECUTE_TABLE_NOT_FOUND;
   }
 
-  Cursor *cursor = table_start(table);
+  // Check if we can optimize with B+tree range scan
+  // Only works if WHERE clause is on the PRIMARY KEY column
+  bool can_optimize = false;
+  bool is_pk_filter = false;
+
+  if (statement->where_op != OP_NONE && table->schema->pk_column != -1) {
+    // Check if WHERE column is the PK
+    Column *pk_col = &table->schema->columns[table->schema->pk_column];
+    if (strcasecmp(statement->where_column, pk_col->name) == 0) {
+      is_pk_filter = true;
+      // Can optimize for =, >, >=, BETWEEN on PK
+      if (statement->where_op == OP_EQUAL ||
+          statement->where_op == OP_GREATER ||
+          statement->where_op == OP_GREATER_EQUAL ||
+          statement->where_op == OP_BETWEEN) {
+        can_optimize = true;
+      }
+    }
+  }
+
+  Cursor *cursor;
+  uint32_t end_key = UINT32_MAX; // For BETWEEN upper bound
+
+  if (can_optimize) {
+    // OPTIMIZED PATH: Use B+tree to start at the right position
+    switch (statement->where_op) {
+    case OP_EQUAL:
+      // For =, find exact key
+      cursor = table_find(table, statement->where_value);
+      end_key = statement->where_value; // Stop after this key
+      break;
+
+    case OP_GREATER:
+      // For >, start at next key after value
+      cursor = table_find_greater_or_equal(table, statement->where_value + 1);
+      break;
+
+    case OP_GREATER_EQUAL:
+      // For >=, start at value
+      cursor = table_find_greater_or_equal(table, statement->where_value);
+      break;
+
+    case OP_BETWEEN:
+      // For BETWEEN, start at lower bound
+      cursor = table_find_greater_or_equal(table, statement->where_value);
+      end_key = statement->where_value2; // Stop after upper bound
+      break;
+
+    default:
+      // Fallback (shouldn't happen)
+      cursor = table_start(table);
+      can_optimize = false;
+    }
+  } else {
+    // UNOPTIMIZED PATH: Full table scan
+    cursor = table_start(table);
+  }
+
   uint32_t rows_matched = 0;
 
   while (!cursor->end_of_table) {
+    uint32_t current_key = cursor_key(cursor);
+
+    // For optimized queries, check if we've passed the end range
+    if (can_optimize && current_key > end_key) {
+      break; // Early termination - don't scan rest of table!
+    }
+
     void *row_data = cursor_value(cursor);
     void **values = deserialize_row(table->schema, row_data);
 
@@ -234,28 +298,57 @@ ExecuteResult execute_select(Statement *statement) {
       }
 
       if (col_found) {
-        switch (statement->where_op) {
-        case OP_EQUAL:
-          row_matches = (col_value == statement->where_value);
-          break;
-        case OP_GREATER:
-          row_matches = (col_value > statement->where_value);
-          break;
-        case OP_LESS:
-          row_matches = (col_value < statement->where_value);
-          break;
-        case OP_GREATER_EQUAL:
-          row_matches = (col_value >= statement->where_value);
-          break;
-        case OP_LESS_EQUAL:
-          row_matches = (col_value <= statement->where_value);
-          break;
-        case OP_BETWEEN:
-          row_matches = (col_value >= statement->where_value &&
-                         col_value <= statement->where_value2);
-          break;
-        default:
-          row_matches = true;
+        if (is_pk_filter) {
+          // For PK filters, we've already optimized the scan
+          // Just need to handle the operator correctly
+          switch (statement->where_op) {
+          case OP_EQUAL:
+            row_matches = (current_key == (uint32_t)statement->where_value);
+            break;
+          case OP_GREATER:
+            row_matches = (current_key > (uint32_t)statement->where_value);
+            break;
+          case OP_LESS:
+            row_matches = (current_key < (uint32_t)statement->where_value);
+            break;
+          case OP_GREATER_EQUAL:
+            row_matches = (current_key >= (uint32_t)statement->where_value);
+            break;
+          case OP_LESS_EQUAL:
+            row_matches = (current_key <= (uint32_t)statement->where_value);
+            break;
+          case OP_BETWEEN:
+            row_matches = (current_key >= (uint32_t)statement->where_value &&
+                           current_key <= (uint32_t)statement->where_value2);
+            break;
+          default:
+            row_matches = true;
+          }
+        } else {
+          // Non-PK filter: full table scan with filtering
+          switch (statement->where_op) {
+          case OP_EQUAL:
+            row_matches = (col_value == statement->where_value);
+            break;
+          case OP_GREATER:
+            row_matches = (col_value > statement->where_value);
+            break;
+          case OP_LESS:
+            row_matches = (col_value < statement->where_value);
+            break;
+          case OP_GREATER_EQUAL:
+            row_matches = (col_value >= statement->where_value);
+            break;
+          case OP_LESS_EQUAL:
+            row_matches = (col_value <= statement->where_value);
+            break;
+          case OP_BETWEEN:
+            row_matches = (col_value >= statement->where_value &&
+                           col_value <= statement->where_value2);
+            break;
+          default:
+            row_matches = true;
+          }
         }
       }
     }
@@ -263,7 +356,7 @@ ExecuteResult execute_select(Statement *statement) {
     // Print row if it matches WHERE condition
     if (row_matches) {
       rows_matched++;
-      printf("Key: %d | ", cursor_key(cursor));
+      printf("Key: %d | ", current_key);
 
       if (statement->select_columns == NULL) {
         // SELECT * - print all columns
@@ -303,6 +396,11 @@ ExecuteResult execute_select(Statement *statement) {
 
   if (statement->where_op != OP_NONE) {
     printf("(%u rows matched)\n", rows_matched);
+    if (can_optimize) {
+      printf("[Optimized: B+tree range scan]\n");
+    } else {
+      printf("[Full table scan]\n");
+    }
   }
 
   cursor_free(cursor);
