@@ -47,6 +47,54 @@ Cursor *table_find(Table *table, uint32_t key) {
   }
 }
 
+bool cursor_retreat(Cursor *cursor) {
+  if (cursor->cell_num > 0) {
+    cursor->cell_num -= 1;
+    return true;
+  }
+
+  // Need to move to previous leaf page
+  // Since we don't have prev pointers, we need to find it
+  // by traversing from the start to find the page before current
+  uint32_t target_page = cursor->page_num;
+
+  // Start from beginning
+  Cursor *temp = table_start(cursor->table);
+  uint32_t prev_page = 0;
+
+  // Find the page before target_page
+  while (!temp->end_of_table) {
+    if (temp->page_num == target_page) {
+      // Found our current page
+      if (prev_page == 0) {
+        // We're at the first page, can't go back
+        cursor_free(temp);
+        return false;
+      }
+
+      // Move cursor to last cell of previous page
+      cursor->page_num = prev_page;
+      void *prev_node = pager_get_page(cursor->table->pager, prev_page);
+      cursor->cell_num = *leaf_node_num_cells(prev_node) - 1;
+      cursor_free(temp);
+      return true;
+    }
+
+    prev_page = temp->page_num;
+
+    // Advance temp to next page
+    void *node = pager_get_page(cursor->table->pager, temp->page_num);
+    uint32_t next_page = *leaf_node_next_leaf(node);
+    if (next_page == 0)
+      break;
+    temp->page_num = next_page;
+    temp->cell_num = 0;
+  }
+
+  cursor_free(temp);
+  return false;
+}
+
 void *cursor_value(Cursor *cursor) {
   uint32_t page_num = cursor->page_num;
   void *page = pager_get_page(cursor->table->pager, page_num);
@@ -110,6 +158,53 @@ Cursor *table_find_greater_or_equal(Table *table, uint32_t key) {
     uint32_t child_index = internal_node_find_child(node, key);
     page_num = *internal_node_child(node, child_index);
   }
+}
+
+Cursor *table_find_less_than(Table *table, uint32_t key) {
+  // Find position of key (or where it would be)
+  Cursor *cursor = table_find_greater_or_equal(table, key);
+
+  if (cursor->end_of_table) {
+    // Key is beyond all entries, so position at last entry
+    cursor_free(cursor);
+
+    // Start from beginning and scan to end
+    cursor = table_start(table);
+    if (cursor->end_of_table) {
+      // Empty table
+      return cursor;
+    }
+
+    // Advance to last entry
+    while (true) {
+      void *node = pager_get_page(table->pager, cursor->page_num);
+      uint32_t num_cells = *leaf_node_num_cells(node);
+      uint32_t next_page = *leaf_node_next_leaf(node);
+
+      if (next_page == 0) {
+        // Last page - position at last cell
+        cursor->cell_num = num_cells - 1;
+        cursor->end_of_table = false;
+        return cursor;
+      }
+
+      cursor->page_num = next_page;
+      cursor->cell_num = 0;
+    }
+  }
+
+  // Check if we're at exact match or insertion point
+  uint32_t current_key = cursor_key(cursor);
+
+  if (current_key >= key) {
+    // We're at or after the key, need to go back one
+    if (!cursor_retreat(cursor)) {
+      // Can't retreat - no entries < key
+      cursor->end_of_table = true;
+    }
+  }
+
+  return cursor;
 }
 
 void leaf_node_split_and_insert(Cursor *cursor, uint32_t key, void *value,
