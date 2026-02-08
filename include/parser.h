@@ -61,7 +61,7 @@ typedef enum {
 
 // Input buffer functions
 static inline InputBuffer* new_input_buffer() {
-    InputBuffer* input_buffer = (InputBuffer*)malloc(sizeof(InputBuffer));
+    InputBuffer* input_buffer =(InputBuffer*) malloc(sizeof(InputBuffer));
     input_buffer->buffer = NULL;
     input_buffer->buffer_length = 0;
     input_buffer->input_length = 0;
@@ -233,7 +233,7 @@ static inline PrepareResult prepare_select(InputBuffer* input_buffer, Statement*
         token = strtok(NULL, " ");  // first column
         
         for (uint32_t i = 0; i < col_count; i++) {
-            statement->select_columns[i] = (char*)malloc(32);
+            statement->select_columns[i] =(char*) malloc( 32);
             strncpy(statement->select_columns[i], token, 31);
             statement->select_columns[i][31] = '\0';
             token = strtok(NULL, " ");
