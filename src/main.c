@@ -214,24 +214,33 @@ ExecuteResult execute_select(Statement *statement) {
   // Only works if WHERE clause is on the PRIMARY KEY column
   bool can_optimize = false;
   bool is_pk_filter = false;
+  bool reverse_scan = false; // For < and <= operators
 
   if (statement->where_op != OP_NONE && table->schema->pk_column != -1) {
     // Check if WHERE column is the PK
     Column *pk_col = &table->schema->columns[table->schema->pk_column];
     if (strcasecmp(statement->where_column, pk_col->name) == 0) {
       is_pk_filter = true;
-      // Can optimize for =, >, >=, BETWEEN on PK
+      // Can optimize for all operators on PK now!
       if (statement->where_op == OP_EQUAL ||
           statement->where_op == OP_GREATER ||
           statement->where_op == OP_GREATER_EQUAL ||
+          statement->where_op == OP_LESS ||
+          statement->where_op == OP_LESS_EQUAL ||
           statement->where_op == OP_BETWEEN) {
         can_optimize = true;
+        // < and <= need reverse scanning
+        if (statement->where_op == OP_LESS ||
+            statement->where_op == OP_LESS_EQUAL) {
+          reverse_scan = true;
+        }
       }
     }
   }
 
   Cursor *cursor;
   uint32_t end_key = UINT32_MAX; // For BETWEEN upper bound
+  uint32_t start_key = 0;        // For < and <= lower bound
 
   if (can_optimize) {
     // OPTIMIZED PATH: Use B+tree to start at the right position
@@ -250,6 +259,18 @@ ExecuteResult execute_select(Statement *statement) {
     case OP_GREATER_EQUAL:
       // For >=, start at value
       cursor = table_find_greater_or_equal(table, statement->where_value);
+      break;
+
+    case OP_LESS:
+      // For <, find last key less than value and scan backward
+      cursor = table_find_less_than(table, statement->where_value);
+      start_key = 0;
+      break;
+
+    case OP_LESS_EQUAL:
+      // For <=, find key or last key before it, scan backward
+      cursor = table_find_less_than(table, statement->where_value + 1);
+      start_key = 0;
       break;
 
     case OP_BETWEEN:
@@ -273,9 +294,14 @@ ExecuteResult execute_select(Statement *statement) {
   while (!cursor->end_of_table) {
     uint32_t current_key = cursor_key(cursor);
 
-    // For optimized queries, check if we've passed the end range
-    if (can_optimize && current_key > end_key) {
+    // For forward scans, check if we've passed the end range
+    if (can_optimize && !reverse_scan && current_key > end_key) {
       break; // Early termination - don't scan rest of table!
+    }
+
+    // For reverse scans, check if we've reached the beginning
+    if (can_optimize && reverse_scan && current_key < start_key) {
+      break; // Early termination for reverse scans
     }
 
     void *row_data = cursor_value(cursor);
@@ -391,13 +417,24 @@ ExecuteResult execute_select(Statement *statement) {
     }
     free(values);
 
-    cursor_advance(cursor);
+    // Move cursor in appropriate direction
+    if (reverse_scan) {
+      if (!cursor_retreat(cursor)) {
+        cursor->end_of_table = true;
+      }
+    } else {
+      cursor_advance(cursor);
+    }
   }
 
   if (statement->where_op != OP_NONE) {
     printf("(%u rows matched)\n", rows_matched);
     if (can_optimize) {
-      printf("[Optimized: B+tree range scan]\n");
+      if (reverse_scan) {
+        printf("[Optimized: B+tree reverse scan]\n");
+      } else {
+        printf("[Optimized: B+tree range scan]\n");
+      }
     } else {
       printf("[Full table scan]\n");
     }
