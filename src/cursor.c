@@ -77,6 +77,41 @@ void cursor_advance(Cursor *cursor) {
 
 void cursor_free(Cursor *cursor) { free(cursor); }
 
+// Find cursor position for key >= target
+// Used for range scans: WHERE col >= value
+Cursor *table_find_greater_or_equal(Table *table, uint32_t key) {
+  void *root_node = pager_get_page(table->pager, table->schema->root_page_num);
+
+  Cursor *cursor = malloc(sizeof(Cursor));
+  cursor->table = table;
+
+  if (get_node_type(root_node) == NODE_LEAF) {
+    cursor->page_num = table->schema->root_page_num;
+    cursor->cell_num = leaf_node_find(root_node, key);
+
+    // If exact match not found, cursor points to where it would go
+    // This is perfect for >= queries
+    uint32_t num_cells = *leaf_node_num_cells(root_node);
+    cursor->end_of_table = (cursor->cell_num >= num_cells);
+    return cursor;
+  }
+
+  uint32_t page_num = table->schema->root_page_num;
+  while (true) {
+    void *node = pager_get_page(table->pager, page_num);
+    if (get_node_type(node) == NODE_LEAF) {
+      cursor->page_num = page_num;
+      cursor->cell_num = leaf_node_find(node, key);
+      uint32_t num_cells = *leaf_node_num_cells(node);
+      cursor->end_of_table = (cursor->cell_num >= num_cells);
+      return cursor;
+    }
+
+    uint32_t child_index = internal_node_find_child(node, key);
+    page_num = *internal_node_child(node, child_index);
+  }
+}
+
 void leaf_node_split_and_insert(Cursor *cursor, uint32_t key, void *value,
                                 uint32_t row_size);
 
@@ -101,6 +136,7 @@ void leaf_node_insert(Cursor *cursor, uint32_t key, void *value,
   *(leaf_node_key(node, cursor->cell_num)) = key;
   memcpy(leaf_node_value(node, cursor->cell_num), value, row_size);
 }
+
 void create_new_root(Table *table, uint32_t root_page_num,
                      uint32_t right_child_page_num) {
   void *root = pager_get_page(table->pager, root_page_num);
@@ -121,6 +157,9 @@ void create_new_root(Table *table, uint32_t root_page_num,
   *node_parent(left_child) = root_page_num;
   *node_parent(right_child) = root_page_num;
 }
+
+void internal_node_insert(Table *table, uint32_t parent_page_num,
+                          uint32_t child_page_num);
 
 void update_internal_node_key(void *node, uint32_t old_key, uint32_t new_key) {
   uint32_t old_child_index = internal_node_find_child(node, old_key);

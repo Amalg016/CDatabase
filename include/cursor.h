@@ -15,6 +15,7 @@ struct Cursor {
 
 Cursor* table_start(Table* table);
 Cursor* table_find(Table* table, uint32_t key);
+Cursor *table_find_greater_or_equal(Table *table, uint32_t key);
 void* cursor_value(Cursor* cursor);
 uint32_t cursor_key(Cursor* cursor);
 void cursor_advance(Cursor* cursor);
