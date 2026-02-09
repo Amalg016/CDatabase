@@ -114,4 +114,8 @@ void pager_close(Pager *pager) {
   free(pager);
 }
 
-uint32_t pager_allocate_page(Pager *pager) { return pager->num_pages; }
+uint32_t pager_allocate_page(Pager *pager) {
+  uint32_t page_num = pager->num_pages;
+  pager->num_pages++; // Increment for next allocation
+  return page_num;
+}

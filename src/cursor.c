@@ -1,5 +1,8 @@
 #include "../include/cursor.h"
 
+// Forward declarations
+void cursor_free(Cursor *cursor);
+
 Cursor *table_start(Table *table) {
   Cursor *cursor = malloc(sizeof(Cursor));
   cursor->table = table;
@@ -47,6 +50,36 @@ Cursor *table_find(Table *table, uint32_t key) {
   }
 }
 
+void *cursor_value(Cursor *cursor) {
+  uint32_t page_num = cursor->page_num;
+  void *page = pager_get_page(cursor->table->pager, page_num);
+  return leaf_node_value(page, cursor->cell_num);
+}
+
+uint32_t cursor_key(Cursor *cursor) {
+  uint32_t page_num = cursor->page_num;
+  void *page = pager_get_page(cursor->table->pager, page_num);
+  return *leaf_node_key(page, cursor->cell_num);
+}
+
+void cursor_advance(Cursor *cursor) {
+  uint32_t page_num = cursor->page_num;
+  void *node = pager_get_page(cursor->table->pager, page_num);
+
+  cursor->cell_num += 1;
+  if (cursor->cell_num >= *leaf_node_num_cells(node)) {
+    uint32_t next_page_num = *leaf_node_next_leaf(node);
+    if (next_page_num == 0) {
+      cursor->end_of_table = true;
+    } else {
+      cursor->page_num = next_page_num;
+      cursor->cell_num = 0;
+    }
+  }
+}
+
+// Move cursor backward (for reverse scans)
+// Returns false if reached beginning of table
 bool cursor_retreat(Cursor *cursor) {
   if (cursor->cell_num > 0) {
     cursor->cell_num -= 1;
@@ -95,34 +128,6 @@ bool cursor_retreat(Cursor *cursor) {
   return false;
 }
 
-void *cursor_value(Cursor *cursor) {
-  uint32_t page_num = cursor->page_num;
-  void *page = pager_get_page(cursor->table->pager, page_num);
-  return leaf_node_value(page, cursor->cell_num);
-}
-
-uint32_t cursor_key(Cursor *cursor) {
-  uint32_t page_num = cursor->page_num;
-  void *page = pager_get_page(cursor->table->pager, page_num);
-  return *leaf_node_key(page, cursor->cell_num);
-}
-
-void cursor_advance(Cursor *cursor) {
-  uint32_t page_num = cursor->page_num;
-  void *node = pager_get_page(cursor->table->pager, page_num);
-
-  cursor->cell_num += 1;
-  if (cursor->cell_num >= *leaf_node_num_cells(node)) {
-    uint32_t next_page_num = *leaf_node_next_leaf(node);
-    if (next_page_num == 0) {
-      cursor->end_of_table = true;
-    } else {
-      cursor->page_num = next_page_num;
-      cursor->cell_num = 0;
-    }
-  }
-}
-
 void cursor_free(Cursor *cursor) { free(cursor); }
 
 // Find cursor position for key >= target
@@ -160,6 +165,8 @@ Cursor *table_find_greater_or_equal(Table *table, uint32_t key) {
   }
 }
 
+// Find cursor position for largest key < target
+// Used for reverse range scans: WHERE col < value
 Cursor *table_find_less_than(Table *table, uint32_t key) {
   // Find position of key (or where it would be)
   Cursor *cursor = table_find_greater_or_equal(table, key);

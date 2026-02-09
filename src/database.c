@@ -67,8 +67,9 @@ Schema *db_create_table(Database *db, const char *table_name,
   schema->pk_column = -1; // No PK yet
   schema->next_rowid = 1; // Start auto-increment at 1
 
-  // Allocate a root page for this table
-  schema->root_page_num = db->catalog->next_free_page++;
+  // Allocate a root page for this table using pager's allocation
+  // This ensures no conflicts with B+tree node splits
+  schema->root_page_num = pager_allocate_page(db->pager);
 
   if (num_columns > MAX_COLUMNS_PER_TABLE) {
     printf("Too many columns (max %d)\n", MAX_COLUMNS_PER_TABLE);

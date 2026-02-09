@@ -4,8 +4,12 @@ name text 32
 age int
 insert into users values 100 Alice 25
 insert into users values 101 Bob 30
+insert into users values 104 Tony 40
+insert into users values 103 Steve 28
 insert users 102 Charlie 35
 select * from users
+select * from users where age >= 30
+select id name from users where id = 104
 create table products 2
 pid int PRIMARY KEY
 pname text 40
