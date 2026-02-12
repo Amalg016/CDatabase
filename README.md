@@ -33,16 +33,19 @@ To create or open a database:
 ./bplus_db mydatabase.db
 ```
 
-You’ll enter the CLI prompt. Some commands:
+You’ll enter the CLI prompt. Available commands:
 
 ```
-CREATE TABLE users 3           # Create a new table with 3 columns
-INSERT users 1 Alice 30        # Insert a row into 'users'
-SELECT * FROM users            # Display all records in users
-SELECT name FROM users WHERE id = 1  # Query with filter
-.tables                        # List all tables
-.btree users                   # Print the B+Tree structure for 'users'
-.exit                          # Quit the CLI
+CREATE TABLE <table> <num_columns>          # Create a new table
+INSERT INTO <table> VALUES <val1> ...       # Insert a record
+INSERT <table> <val1> ...                   # Insert (short form)
+SELECT * FROM <table>                       # Display all records
+SELECT <col1> <col2> FROM <table>           # Display specific columns
+SELECT * FROM <table> WHERE <col> <op> <val> # Filter results
+  Operators: =, >, <, >=, <=, BETWEEN x AND y
+.tables                                     # List all tables
+.btree <table>                              # Print B+Tree structure
+.exit                                       # Quit the CLI
 ```
 
 ---

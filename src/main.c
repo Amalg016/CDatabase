@@ -35,6 +35,20 @@ MetaCommandResult do_meta_command(InputBuffer *input_buffer) {
       db_close(current_db);
     }
     exit(EXIT_SUCCESS);
+  } else if (strcmp(input_buffer->buffer, ".help") == 0) {
+    printf("Commands:\n");
+    printf("  CREATE TABLE <n> <num_columns> - Create a new table\n");
+    printf("  INSERT INTO <table> VALUES <val1> <val2> ... - Insert record\n");
+    printf("  INSERT <table> <val1> <val2> ... - Insert (short form)\n");
+    printf("  SELECT * FROM <table> - Display all records\n");
+    printf("  SELECT <col1> <col2> FROM <table> - Display specific columns\n");
+    printf("  SELECT * FROM <table> WHERE <col> <op> <val> - Filter results\n");
+    printf("    Operators: =, >, <, >=, <=, BETWEEN x AND y\n");
+    printf("  .tables - List all tables\n");
+    printf("  .btree <table> - Show B+tree structure\n");
+    printf("  .exit - Exit\n");
+    printf("  .help - Show this help\n");
+    return META_COMMAND_SUCCESS;
   } else if (strcmp(input_buffer->buffer, ".tables") == 0) {
     if (current_db) {
       db_list_tables(current_db);
@@ -382,7 +396,7 @@ ExecuteResult execute_select(Statement *statement) {
     // Print row if it matches WHERE condition
     if (row_matches) {
       rows_matched++;
-      printf("Key: %d | ", current_key);
+
 
       if (statement->select_columns == NULL) {
         // SELECT * - print all columns
@@ -469,18 +483,8 @@ int main(int argc, char *argv[]) {
 
   InputBuffer *input_buffer = new_input_buffer();
 
-  printf("Multi-Table B+Tree Database with SQL-like syntax\n");
-  printf("Commands:\n");
-  printf("  CREATE TABLE <n> <num_columns> - Create a new table\n");
-  printf("  INSERT INTO <table> VALUES <val1> <val2> ... - Insert record\n");
-  printf("  INSERT <table> <val1> <val2> ... - Insert (short form)\n");
-  printf("  SELECT * FROM <table> - Display all records\n");
-  printf("  SELECT <col1> <col2> FROM <table> - Display specific columns\n");
-  printf("  SELECT * FROM <table> WHERE <col> <op> <val> - Filter results\n");
-  printf("    Operators: =, >, <, >=, <=, BETWEEN x AND y\n");
-  printf("  .tables - List all tables\n");
-  printf("  .btree <table> - Show B+tree structure\n");
-  printf("  .exit - Exit\n\n");
+  printf("\n");
+
 
   if (current_db->catalog->num_tables > 0) {
     printf("Existing tables found:\n");
